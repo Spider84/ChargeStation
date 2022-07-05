@@ -38,8 +38,12 @@
 
 #include <PWM.h>
 #include <Adafruit_NeoPixel.h>
+#include <Wire.h>
+#include <PN532_I2C.h>
+#include <PN532.h>
+#include <NfcAdapter.h>
+#include <EEPROM.h>
 #include "keyb.h"
-
 /*
 *********************************************************************************************************
 *                                              CONSTANTS
@@ -90,6 +94,10 @@
 
 #define PWM_PERCENT         50    // Процент ШИМ.
 
+#define KEY_NFC             IN_2_PIN
+#define KEY_START           IN_1_PIN
+#define BEEP_PIN            51
+
 /*
 *********************************************************************************************************
 *                                               MACROS
@@ -116,8 +124,17 @@ enum USER_MODE_E {
   USER_MODE_NORMAL = 0,   // Норма.
   USER_MODE_PRE_CHARGE,   // Перед зарядом.
   USER_MODE_CHARGE,       // Заряд.
-  USER_MODE_ALARM         // Авария.
+  USER_MODE_ALARM,        // Авария.
+  USER_MODE_CARD_ADD,
+  USER_MODE_CARD_CLEAR
 };
+
+typedef uint8_t tag_t[7];
+
+typedef struct {
+    uint8_t flag;
+    tag_t tag;
+} tag_recotrd;
 
 /*
 *********************************************************************************************************
@@ -153,6 +170,10 @@ int           pwmCur;             // Текущий шим.
 *                                           GLOBAL VARIABLES
 *********************************************************************************************************
 */
+
+PN532_I2C pn532_i2c(Wire);
+NfcAdapter nfc = NfcAdapter(pn532_i2c);
+bool granted = false;
 
 /*
 *********************************************************************************************************
@@ -239,6 +260,9 @@ void setup() {
   //Timer1.attachInterrupt(timer1Isr);
 
   InitTimersSafe(); 
+  
+  nfc.begin();
+  
   bool success = SetPinFrequencySafe(PWM_OUT_PIN, 1000);
 
   pixels.begin();
@@ -250,6 +274,7 @@ void setup() {
 }
 
 void loop() {
+  readNFC();  
   pwmWrite(PWM_OUT_PIN, map(pwmCur, 0, 100, 0, 255));
 
   SetInLed(GetStateIn());
@@ -284,6 +309,14 @@ void loop() {
       break;    
     case USER_MODE_ALARM:
       Serial.println("USER_MODE_ALARM");
+      break;    
+    case USER_MODE_CARD_ADD:
+      Serial.println("USER_MODE_CARD_ADD");
+      break;    
+    case USER_MODE_CARD_CLEAR:
+      Serial.println("USER_MODE_CARD_CLEAR");
+      clear_tags();
+      userMode = USER_MODE_NORMAL;      
       break;    
   }
 
@@ -332,6 +365,188 @@ void loop() {
   refreshLedLight();
 }
 
+void clear_tags()
+{
+  EEPROM.update(0, 0xFF);
+}
+
+void print_tag(tag_t tag)
+{
+  Serial.print("TAG:");
+  Serial.print(sizeof(tag_t));
+  for (uint8_t i=0; i<sizeof(tag_t); ++i)
+  {
+    Serial.print(":");
+    Serial.print(tag[i], HEX);    
+  }
+  Serial.println();
+}
+
+bool find_tag(tag_t tag)
+{  
+  tag_recotrd tmp_tag;
+  uint32_t ee_count = EEPROM.length();
+//  tag_t tag;
+//  memset(tag, 0xFF, sizeof(tag_t));
+//  nfc_tag.getUid((byte *)tag, min(sizeof(tag_t),nfc_tag.getUidLength()));
+  print_tag(tag);
+  for (uint32_t addr=0; addr<ee_count; addr+=sizeof(tag_recotrd)) {
+    Serial.println(addr, HEX);
+    EEPROM.get(addr, tmp_tag);
+    Serial.print(tmp_tag.flag, HEX);
+    Serial.print(" ");
+    print_tag(tmp_tag.tag);
+    if ((tmp_tag.flag & 0x03) == 2) {
+        if (!memcmp(tag, tmp_tag.tag, sizeof(tag_t))) {
+            Serial.println("FOUND!");
+            return true;
+        }
+    } else 
+    if (tmp_tag.flag == 0xFFU) {
+        break;
+    }
+  }
+  Serial.println("NOT FOUND!");
+  return false;
+}
+
+bool add_tag(tag_t tag)
+{
+    tag_recotrd tmp_tag;    
+    uint32_t ee_count = EEPROM.length();
+//    tag_t tag;
+//    memset(tag, 0xFF, sizeof(tag_t));
+//    nfc_tag.getUid((byte *)tag, min(sizeof(tag_t),nfc_tag.getUidLength()));
+    print_tag(tag);
+    for (uint32_t addr=0; addr<ee_count; addr+=sizeof(tag_recotrd)) {
+        Serial.println(addr, HEX);
+        EEPROM.get(addr, tmp_tag);
+        Serial.print(tmp_tag.flag, HEX);
+        Serial.print(" ");
+        print_tag(tmp_tag.tag);
+        bool is_last = tmp_tag.flag == 0xFF;
+        if (is_last || ((tmp_tag.flag & 0x02) == 0)) {
+            tmp_tag.flag = (uint8_t )0xFE;
+            memcpy(tmp_tag.tag, tag, sizeof(tag_t));
+            EEPROM.put(addr, tmp_tag);
+            if (is_last) {
+                Serial.println("LAST ");
+                EEPROM.update(addr+sizeof(tag_recotrd), 0xFF);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+//Весь ужас далее - попытка придать стандартному PN532 коду большей асинхронности
+//Из коробки он блокируемый, что приводит к тормозам кода и реакциям на кнопку.
+
+uint8_t pn532_packetbuffer[64];
+
+void readNFC() 
+{  
+  static tag_t last_tag;
+  static uint32_t tag_time = 0;  
+
+  pn532_packetbuffer[0] = PN532_COMMAND_INLISTPASSIVETARGET;
+  pn532_packetbuffer[1] = 1;  // max 1 cards at once (we can set this to 2 later)
+  pn532_packetbuffer[2] = PN532_MIFARE_ISO14443A;
+
+  static uint8_t s_state = 0;
+  int8_t ret = -1;
+  tag_t tmp_tag;
+  
+  switch (s_state) {
+    default:
+      s_state = 0;
+    case 0:
+//      Serial.print("CMD ");
+      ret = pn532_i2c.writeCommand(pn532_packetbuffer, 3);
+      if (ret>=0)
+        ++s_state;
+      break;
+    case 1:
+//      Serial.print("RESP ");
+      ret = pn532_i2c.readResponse(pn532_packetbuffer, sizeof(pn532_packetbuffer), 1);
+      if (ret!=-1) {
+        ++s_state;
+        if (ret>=0) {
+          if (pn532_packetbuffer[0] == 1) {
+            uint16_t sens_res = pn532_packetbuffer[2];
+            sens_res <<= 8;
+            sens_res |= pn532_packetbuffer[3];
+        
+  //          DMSG("ATQA: 0x");  DMSG_HEX(sens_res);
+  //          DMSG("SAK: 0x");  DMSG_HEX(pn532_packetbuffer[4]);
+  //          DMSG("\n");
+        
+            /* Card appears to be Mifare Classic */
+  //          *uidLength = pn532_packetbuffer[5];
+
+            memset(tmp_tag, 0xFF, sizeof(tag_t));
+            for (uint8_t i = 0; i < pn532_packetbuffer[5]; i++) {
+                tmp_tag[i] = pn532_packetbuffer[6 + i];
+            }
+
+            if (ret>=0)
+          // if (nfc.tagPresent(50))
+           {
+          //   NfcTag tag = nfc.read();
+          //
+          //   tag_t tmp_tag;
+          //   memset(tmp_tag, 0xFF, sizeof(tag_t));
+          //   tag.getUid((byte *)tmp_tag, min(sizeof(tag_t), tag.getUidLength()));
+          //
+          ////   print_tag(last_tag);
+          ////   print_tag(tmp_tag);
+             if (!memcmp(last_tag,tmp_tag,sizeof(tag_t)) && (millis()-tag_time<5000)) {
+              return;
+             }
+             tag_time = millis();
+          
+          //   Serial.println("OTHER");
+             memcpy(last_tag,tmp_tag,sizeof(tag_t));   
+             
+          //   tag.print();
+             print_tag(tmp_tag);
+            
+             //tagId = tag.getUidString();
+             switch (userMode) {
+              case USER_MODE_NORMAL:
+                Serial.println("BEEP");
+                digitalWrite(BEEP_PIN, HIGH);
+                delay(200);
+                digitalWrite(BEEP_PIN, LOW);
+                if (find_tag(tmp_tag)) {
+                  granted = true;
+                } else {
+                  Serial.println("BEEP2");
+                  delay(200);
+                  digitalWrite(BEEP_PIN, HIGH);
+                  delay(200);
+                  digitalWrite(BEEP_PIN, LOW);
+                }
+                break;
+              case USER_MODE_CARD_ADD:
+                userMode = USER_MODE_NORMAL;
+                digitalWrite(BEEP_PIN, HIGH);
+                delay(1000);
+                digitalWrite(BEEP_PIN, LOW);
+                add_tag(tmp_tag);
+              break;
+             }
+           }
+          } else
+            ret = -1;
+        }
+      }      
+      break;
+  }
+//  Serial.print("RET:");
+//  Serial.println(ret);  
+}
+
 void resetLedLight() {
   ledLight = LED_LIGHT_MAX;
   ledLightDelta = -1;
@@ -347,14 +562,87 @@ void refreshLedLight() {
 
 // Обновить пользовательский режим.
 void refreshUserMode() {
-  int event = keyb.getEvent();
-  
+  static int event = 0;
+  static unsigned long pressTime;
+  static unsigned char pressCnt = 0;
+
+  if (keyb.getEventFlag()) {
+    event = keyb.getEvent();
+  }
+
+//  Serial.print(keyb.getEventFlag());
+//  Serial.print(" ");
+//  Serial.println(event);
+ 
   switch (userMode) {
+    case USER_MODE_CARD_CLEAR:
+      putLight    (255, 0, 0, ledLight);
+      break;
+    case USER_MODE_CARD_ADD:      
+      if (event == KEYB_EVENT_PRESS_BTN_2) {        
+        if (pressTime && (millis() - pressTime>=60000)) {
+          userMode = USER_MODE_ALARM;
+          pressTime = 0;
+        }
+      } else {        
+        if (pressTime && (millis()-pressTime>=5000)) { //5000
+          userMode = USER_MODE_NORMAL;
+          pressTime = 0;
+        }
+      }
+      putLight    (0, 255, 255, ledLight);
+      break;
     case USER_MODE_NORMAL:
       // Норма.
       if (event == KEYB_EVENT_PRESS_BTN_1) {
+        if (keyb.getEventFlag()) {
         // Нажали кнопку 1.          
-        userMode = USER_MODE_PRE_CHARGE;
+          if (granted)
+            userMode = USER_MODE_PRE_CHARGE;
+          granted = false;
+        }
+      } else
+      if (event == KEYB_EVENT_PRESS_BTN_2) {
+        if (keyb.getEventFlag()) {
+          // Нажали кнопку 2.
+          pressTime = millis();
+//          Serial.println("BTN2_PRESS");
+        } else {
+//          Serial.print("BTN2 ");
+//          Serial.println(millis() - pressTime);
+          if (pressTime && (millis() - pressTime>=5000)) {
+            Serial.println("BTN2_HOLD");
+            userMode = USER_MODE_CARD_ADD;
+            pressTime = millis();
+            Serial.println("BEEP");
+            for (uint8_t i=0; i<3; ++i) {
+              digitalWrite(BEEP_PIN, HIGH);
+              delay(200);
+              digitalWrite(BEEP_PIN, LOW);
+              delay(200);           
+            }
+          }
+        }
+      } else
+      if (event == KEYB_EVENT_UN_PRESS_BTN_2) {
+        if (keyb.getEventFlag()) {
+//          Serial.println("BTN2_UN_PRESS");
+          if (pressTime && (millis() - pressTime<1000)) {
+            ++pressCnt;
+            pressTime = millis();
+          }
+        } 
+      } 
+
+      if (pressCnt && (millis() - pressTime>=1000)) {       
+        Serial.print("CNT ");
+        Serial.println(pressCnt);
+        if (pressCnt==5) {
+          userMode = USER_MODE_CARD_CLEAR;
+          Serial.println("CLEAR");
+        }
+//        delay(2000);
+        pressCnt = 0;
       }
 
       pwmCur = 0;
@@ -367,9 +655,10 @@ void refreshUserMode() {
 
     case USER_MODE_PRE_CHARGE:
       // Перед зарядом.
-      if (event == KEYB_EVENT_PRESS_BTN_1) {
+      if (event == KEYB_EVENT_PRESS_BTN_1 && keyb.getEventFlag()) {
         // Нажали кнопку 1.          
         userMode = USER_MODE_NORMAL;
+        granted = false;
       }
       else {
         switch (stateHold) {
@@ -403,7 +692,7 @@ void refreshUserMode() {
 
     case USER_MODE_CHARGE:
       // Заряд.
-      if (event == KEYB_EVENT_PRESS_BTN_1) {
+      if (event == KEYB_EVENT_PRESS_BTN_1 && keyb.getEventFlag()) {
         // Нажали кнопку 1.          
         userMode = USER_MODE_NORMAL;
       }
@@ -440,7 +729,7 @@ void refreshUserMode() {
   
     case USER_MODE_ALARM:
       // Авария.
-      if (event == KEYB_EVENT_PRESS_BTN_1) {
+      if (event == KEYB_EVENT_PRESS_BTN_1 && keyb.getEventFlag()) {
         // Нажали кнопку 1.          
         userMode = USER_MODE_NORMAL;
       }
