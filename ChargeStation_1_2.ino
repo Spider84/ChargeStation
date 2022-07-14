@@ -96,7 +96,7 @@
 
 #define KEY_NFC             IN_2_PIN
 #define KEY_START           IN_1_PIN
-#define BEEP_PIN            51
+#define BEEP_PIN            41
 
 /*
 *********************************************************************************************************
@@ -232,6 +232,7 @@ void setup() {
   pinMode(LED_IN_2_PIN,             OUTPUT);
   pinMode(LED_IN_3_PIN,             OUTPUT);
   pinMode(LED_IN_4_PIN,             OUTPUT);
+  pinMode(BEEP_PIN,                 OUTPUT);
 
 
   digitalWrite(RELE_1_PIN,          LOW);
@@ -255,6 +256,8 @@ void setup() {
   digitalWrite(OUT_CHARGE_PIN,      HIGH);
   digitalWrite(OUT_CHARGE_FAN_PIN,  HIGH);
   digitalWrite(OUT_ALARM_PIN,       HIGH);
+
+  digitalWrite(BEEP_PIN,             LOW);
 
   //Timer1.initialize(100);
   //Timer1.attachInterrupt(timer1Isr);
