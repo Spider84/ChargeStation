@@ -458,7 +458,6 @@ void readNFC()
 
   static uint8_t s_state = 0;
   int8_t ret = -1;
-  tag_t tmp_tag;
   
   switch (s_state) {
     default:
@@ -487,22 +486,14 @@ void readNFC()
             /* Card appears to be Mifare Classic */
   //          *uidLength = pn532_packetbuffer[5];
 
+            tag_t tmp_tag;
             memset(tmp_tag, 0xFF, sizeof(tag_t));
             for (uint8_t i = 0; i < pn532_packetbuffer[5]; i++) {
                 tmp_tag[i] = pn532_packetbuffer[6 + i];
             }
 
             if (ret>=0)
-          // if (nfc.tagPresent(50))
-           {
-          //   NfcTag tag = nfc.read();
-          //
-          //   tag_t tmp_tag;
-          //   memset(tmp_tag, 0xFF, sizeof(tag_t));
-          //   tag.getUid((byte *)tmp_tag, min(sizeof(tag_t), tag.getUidLength()));
-          //
-          ////   print_tag(last_tag);
-          ////   print_tag(tmp_tag);
+            {
              if (!memcmp(last_tag,tmp_tag,sizeof(tag_t)) && (millis()-tag_time<5000)) {
               return;
              }
@@ -513,6 +504,34 @@ void readNFC()
              
           //   tag.print();
              print_tag(tmp_tag);
+
+             if (nfc.tagPresent(50))
+             {
+               NfcTag tag = nfc.read();       
+          
+               if (tag.hasNdefMessage()) {
+                 NdefMessage ndef = tag.getNdefMessage();
+                 unsigned int cnt = ndef.getRecordCount();
+                 if (cnt>0) {
+                   for (unsigned int i = 0; i < cnt; ++i) {
+                     NdefRecord rec = ndef.getRecord(i);                  
+                     if (rec.getTnf() == TNF_WELL_KNOWN) {
+                       if (rec.getTypeLength()==1) {
+                        uint8_t RTD_TYPE[1] = { 0x00 };                       
+                        rec.getType(RTD_TYPE);
+                        if (RTD_TYPE[0] == 'B') {
+                          unsigned int len = rec.getPayloadLength();
+                          if (len<=sizeof(tag_t)) {
+                            rec.getPayload(tmp_tag);
+                          }
+                          break;
+                        }
+                       }
+                     }
+                   }
+                 }
+               }
+             }
             
              //tagId = tag.getUidString();
              switch (userMode) {
@@ -536,6 +555,31 @@ void readNFC()
                 digitalWrite(BEEP_PIN, HIGH);
                 delay(1000);
                 digitalWrite(BEEP_PIN, LOW);
+
+                if (nfc.tagPresent(50))
+                {
+                   NfcTag tag = nfc.read();
+
+                   uint8_t len = min(sizeof(tag_t),tag.getUidLength());
+                   memset(tmp_tag, 0xFF, sizeof(tag_t));
+                   tag.getUid((byte *)tmp_tag, len);
+                   for (unsigned int i=0; i<len; ++i) {
+                      tmp_tag[i] = ~tmp_tag[i];
+                   }
+
+                   NdefRecord* r = new NdefRecord();
+                   r->setTnf(TNF_WELL_KNOWN);
+                   uint8_t RTD_BIN[1] = { 'B' }; // TODO this should be a constant or preprocessor
+                   r->setType(RTD_BIN, sizeof(RTD_BIN));
+                   r->setPayload(tmp_tag, sizeof(tag_t));
+    
+                   NdefMessage ndef = NdefMessage();                                      
+                   ndef.addRecord(*r);
+                   delete(r);
+
+                   nfc.write(ndef);
+                }
+             
                 add_tag(tmp_tag);
               break;
              }
