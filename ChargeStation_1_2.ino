@@ -556,9 +556,23 @@ void readNFC()
                 delay(1000);
                 digitalWrite(BEEP_PIN, LOW);
 
+                Serial.println("Try to Write NDEF...");
                 if (nfc.tagPresent(50))
                 {
+                   Serial.println("NFC Read");
                    NfcTag tag = nfc.read();
+
+                   Serial.print(F("TAG Type:"));
+                   Serial.println(tag.getTagType());
+               
+                   switch (tag.getUidLength()) {
+                    case 4:
+                        Serial.println(F("Reading Mifare Classic"));
+                        break;
+                    default:
+                        Serial.println(F("Can not determine tag type"));
+                        break;
+                   }
 
                    uint8_t len = min(sizeof(tag_t),tag.getUidLength());
                    memset(tmp_tag, 0xFF, sizeof(tag_t));
@@ -577,6 +591,7 @@ void readNFC()
                    ndef.addRecord(*r);
                    delete(r);
 
+                   Serial.println("NFC Write");
                    nfc.write(ndef);
                 }
              
