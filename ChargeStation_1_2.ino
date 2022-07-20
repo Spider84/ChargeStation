@@ -201,7 +201,7 @@ bool granted = false;
 */
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
   pinMode(OUT_NORMAL_PIN,           OUTPUT);
   pinMode(OUT_CONNECT_PIN,          OUTPUT);
@@ -702,6 +702,12 @@ void refreshUserMode() {
         if (pressCnt==5) {
           userMode = USER_MODE_CARD_CLEAR;
           Serial.println("CLEAR");
+          for (uint8_t i=0; i<6; ++i) {
+            digitalWrite(BEEP_PIN, HIGH);
+            delay(200);
+            digitalWrite(BEEP_PIN, LOW);
+            delay(200);           
+          }
         }
 //        delay(2000);
         pressCnt = 0;
