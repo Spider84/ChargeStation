@@ -507,18 +507,31 @@ void readNFC()
 
              if (nfc.tagPresent(50))
              {
+               Serial.println("NFC Read");
                NfcTag tag = nfc.read();       
           
                if (tag.hasNdefMessage()) {
+                 Serial.println("Reading NDEFs...");
                  NdefMessage ndef = tag.getNdefMessage();
                  unsigned int cnt = ndef.getRecordCount();
+                 Serial.print("NDEFs count:");
+                 Serial.println(cnt);
                  if (cnt>0) {
                    for (unsigned int i = 0; i < cnt; ++i) {
-                     NdefRecord rec = ndef.getRecord(i);                  
-                     if (rec.getTnf() == TNF_WELL_KNOWN) {
-                       if (rec.getTypeLength()==1) {
+                     NdefRecord rec = ndef.getRecord(i);
+                     auto Tnf = rec.getTnf();
+                     Serial.print(i);
+                     Serial.print(" TNF:");
+                     Serial.print(Tnf);                     
+                     if (Tnf == TNF_WELL_KNOWN) {
+                       auto len = rec.getTypeLength();
+                       Serial.print(" Len:");
+                       Serial.print(len);
+                       if (len==1) {
                         uint8_t RTD_TYPE[1] = { 0x00 };                       
                         rec.getType(RTD_TYPE);
+                        Serial.print(" Type:");
+                        Serial.print(RTD_TYPE[0]);
                         if (RTD_TYPE[0] == 'B') {
                           unsigned int len = rec.getPayloadLength();
                           if (len<=sizeof(tag_t)) {
@@ -528,10 +541,14 @@ void readNFC()
                         }
                        }
                      }
+                     Serial.println();
                    }
                  }
-               }
+               } else 
+                  Serial.println("No NDEF Records");
              }
+
+             print_tag(tmp_tag);
             
              //tagId = tag.getUidString();
              switch (userMode) {
@@ -580,6 +597,19 @@ void readNFC()
                    for (unsigned int i=0; i<len; ++i) {
                       tmp_tag[i] = ~tmp_tag[i];
                    }
+
+                   if (!tag.hasNdefMessage()) {
+                      Serial.println(F("Trying to format..."));
+                      if (!nfc.format()) {
+                        Serial.println(F("ERR Unable to format!"));
+                        break;
+                      }
+                      Serial.println(F("TAG Formated!"));
+                      uint8_t cnt = 10;
+                      while(cnt-->0 && !nfc.tagPresent(100));
+                      tag = nfc.read();
+                   } else 
+                      nfc.clean();
 
                    NdefRecord* r = new NdefRecord();
                    r->setTnf(TNF_WELL_KNOWN);
