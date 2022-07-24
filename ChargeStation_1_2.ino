@@ -202,7 +202,7 @@ bool granted = false;
 */
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(230400);
 
   pinMode(OUT_NORMAL_PIN,           OUTPUT);
   pinMode(OUT_CONNECT_PIN,          OUTPUT);
@@ -575,7 +575,7 @@ void readNFC()
                 delay(200);
                 digitalWrite(BEEP_PIN, HIGH);
 
-                // Serial.println("Try to Write NDEF...");
+                Serial.println("Try to Write NDEF...");
                 Serial.print(F("Re-Read CARD..."));
                 if (nfc.tagPresent()) {
                   Serial.print(F("Found..."));
@@ -597,50 +597,52 @@ void readNFC()
                    }
 
                     Serial.print("Invert MAC: ");print_tag(tmp_tag);                    
-                    Serial.print(F("Re-Read CARD..."));
-                    if (nfc.tagPresent()) {
-                      Serial.print(F("Found..."));
-                      tag = nfc.read();
-                      Serial.println(F("Readed"));
+                    // Serial.print(F("Re-Read CARD..."));
+                    // if (nfc.tagPresent()) {
+                    //   Serial.print(F("Found..."));
+                    //   tag = nfc.read();
+                    //   Serial.println(F("Readed"));
 
-                      NdefMessage ndef((!tag.hasNdefMessage())?NdefMessage():tag.getNdefMessage());
-                      if (!tag.hasNdefMessage() || (ndef.getRecordCount()>=MAX_NDEF_RECORDS)) {
-                          Serial.println(F("Trying to clean..."));
-                          nfc.clean();
-                          Serial.print(F("Re-Read CARD..."));
-                          if (nfc.tagPresent()) {
-                            Serial.print(F("Found..."));
-                            tag = nfc.read();
-                            Serial.println(F("Readed"));
+                    NdefMessage ndef((!tag.hasNdefMessage())?NdefMessage():tag.getNdefMessage());
+                    if (!tag.hasNdefMessage() || (ndef.getRecordCount()>=MAX_NDEF_RECORDS)) {
+                        Serial.println(F("Trying to clean..."));
+                        if (!nfc.clean()) {
+                          Serial.println(F("ERR Unable to clean!"));
+                          break;
+                        }
+                        Serial.print(F("Re-Read CARD..."));
+                        if (nfc.tagPresent()) {
+                          Serial.print(F("Found..."));
+                          tag = nfc.read();
+                          Serial.println(F("Readed"));
 
-                            Serial.println(F("Trying to format..."));
-                            if (!nfc.format()) {
-                              Serial.println(F("ERR Unable to format!"));
-                              break;
-                           }                            
-                            // Serial.println(F("TAG Formated!"));
-                          // uint8_t cnt = 10;
-                          // while(cnt-->0 && !nfc.tagPresent(100));
-                          }
-                      } else {
-                        Serial.println(F("Good NDEF"));
-                      }
+                          Serial.println(F("Trying to format..."));
+                          if (!nfc.format()) {
+                            Serial.println(F("ERR Unable to format!"));
+                            break;
+                          }                            
+                        }
+                          // Serial.println(F("TAG Formated!"));
+                        // uint8_t cnt = 10;
+                        // while(cnt-->0 && !nfc.tagPresent(100));
+                    } else {
+                      Serial.println(F("Good NDEF"));
+                    }
 
-                      // NdefRecord *r(new NdefRecord());
-                      // r->setTnf(TNF_WELL_KNOWN);
-                      // r->setType((const byte *)"B", 1);
-                      // r->setPayload(tmp_tag, sizeof(tag_t));
-                      ndef.addRecord(NdefRecord((byte)TNF_WELL_KNOWN, (const byte *)"B", (size_t)1, (const byte *)tmp_tag, sizeof(tag_t)));
-                      // delete r;
-                        
-                      Serial.print("NFC Write ");
-                      boolean writed(nfc.write(ndef));
-                      if (writed) {
-                        Serial.println("DONE!");
-                        goto done;
-                      } else {
-                        Serial.println("FAIL!");
-                      }
+                    // NdefRecord *r(new NdefRecord());
+                    // r->setTnf(TNF_WELL_KNOWN);
+                    // r->setType((const byte *)"B", 1);
+                    // r->setPayload(tmp_tag, sizeof(tag_t));
+                    ndef.addRecord(NdefRecord((byte)TNF_WELL_KNOWN, (const byte *)"B", (size_t)1, (const byte *)tmp_tag, sizeof(tag_t)));
+                    // delete r;
+                      
+                    Serial.print("NFC Write ");
+                    boolean writed(nfc.write(ndef));
+                    if (writed) {
+                      Serial.println("DONE!");
+                      goto done;
+                    } else {
+                      Serial.println("FAIL!");
                     }
                     for (uint8_t i=0; i<2; ++i) {
                       digitalWrite(BEEP_PIN, LOW);
