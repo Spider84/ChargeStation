@@ -171,8 +171,9 @@ int           pwmCur;             // Текущий шим.
 *********************************************************************************************************
 */
 
-PN532_I2C pn532_i2c(Wire);
-NfcAdapter nfc = NfcAdapter(pn532_i2c);
+static PN532_I2C pn532_i2c(Wire);
+static NfcAdapter nfc = NfcAdapter(pn532_i2c);
+static NfcTag tag;
 bool granted = false;
 
 /*
@@ -375,12 +376,14 @@ void clear_tags()
 
 void print_tag(tag_t tag)
 {
-  Serial.print("TAG:");
-  Serial.print(sizeof(tag_t));
+  Serial.print((unsigned int)sizeof(tag_t));
   for (uint8_t i=0; i<sizeof(tag_t); ++i)
   {
     Serial.print(":");
-    Serial.print(tag[i], HEX);    
+    uint8_t c = tag[i];
+    if (c < 0x10)
+      Serial.print("0");
+    Serial.print(c, HEX);    
   }
   Serial.println();
 }
@@ -392,13 +395,13 @@ bool find_tag(tag_t tag)
 //  tag_t tag;
 //  memset(tag, 0xFF, sizeof(tag_t));
 //  nfc_tag.getUid((byte *)tag, min(sizeof(tag_t),nfc_tag.getUidLength()));
-  print_tag(tag);
+  // print_tag(tag);
   for (uint32_t addr=0; addr<ee_count; addr+=sizeof(tag_recotrd)) {
-    Serial.println(addr, HEX);
+    // Serial.println(addr, HEX);
     EEPROM.get(addr, tmp_tag);
-    Serial.print(tmp_tag.flag, HEX);
-    Serial.print(" ");
-    print_tag(tmp_tag.tag);
+    // Serial.print(tmp_tag.flag, HEX);
+    // Serial.print(" ");
+    // print_tag(tmp_tag.tag);
     if ((tmp_tag.flag & 0x03) == 2) {
         if (!memcmp(tag, tmp_tag.tag, sizeof(tag_t))) {
             Serial.println("FOUND!");
@@ -420,20 +423,20 @@ bool add_tag(tag_t tag)
 //    tag_t tag;
 //    memset(tag, 0xFF, sizeof(tag_t));
 //    nfc_tag.getUid((byte *)tag, min(sizeof(tag_t),nfc_tag.getUidLength()));
-    print_tag(tag);
+    // print_tag(tag);
     for (uint32_t addr=0; addr<ee_count; addr+=sizeof(tag_recotrd)) {
-        Serial.println(addr, HEX);
+        // Serial.println(addr, HEX);
         EEPROM.get(addr, tmp_tag);
-        Serial.print(tmp_tag.flag, HEX);
-        Serial.print(" ");
-        print_tag(tmp_tag.tag);
+        // Serial.print(tmp_tag.flag, HEX);
+        // Serial.print(" ");
+        // print_tag(tmp_tag.tag);
         bool is_last = tmp_tag.flag == 0xFF;
         if (is_last || ((tmp_tag.flag & 0x02) == 0)) {
             tmp_tag.flag = (uint8_t )0xFE;
             memcpy(tmp_tag.tag, tag, sizeof(tag_t));
             EEPROM.put(addr, tmp_tag);
             if (is_last) {
-                Serial.println("LAST ");
+                // Serial.println("LAST ");
                 EEPROM.update(addr+sizeof(tag_recotrd), 0xFF);
             }
             return true;
@@ -450,12 +453,7 @@ uint8_t pn532_packetbuffer[64];
 void readNFC() 
 {  
   static tag_t last_tag;
-  static uint32_t tag_time = 0;  
-
-  pn532_packetbuffer[0] = PN532_COMMAND_INLISTPASSIVETARGET;
-  pn532_packetbuffer[1] = 1;  // max 1 cards at once (we can set this to 2 later)
-  pn532_packetbuffer[2] = PN532_MIFARE_ISO14443A;
-
+  static uint32_t tag_time = 0;
   static uint8_t s_state = 0;
   int8_t ret = -1;
   
@@ -464,21 +462,23 @@ void readNFC()
       s_state = 0;
     case 0:
 //      Serial.print("CMD ");
+      pn532_packetbuffer[0] = PN532_COMMAND_INLISTPASSIVETARGET;
+      pn532_packetbuffer[1] = 1;  // max 1 cards at once (we can set this to 2 later)
+      pn532_packetbuffer[2] = PN532_MIFARE_ISO14443A;
+
       ret = pn532_i2c.writeCommand(pn532_packetbuffer, 3);
       if (ret>=0)
         ++s_state;
       break;
     case 1:
-//      Serial.print("RESP ");
       ret = pn532_i2c.readResponse(pn532_packetbuffer, sizeof(pn532_packetbuffer), 1);
+      // Serial.print("RESP: ");Serial.println(ret);
       if (ret!=-1) {
         ++s_state;
         if (ret>=0) {
+          ret = -1;
           if (pn532_packetbuffer[0] == 1) {
-            uint16_t sens_res = pn532_packetbuffer[2];
-            sens_res <<= 8;
-            sens_res |= pn532_packetbuffer[3];
-        
+  //          uint16_t sens_res = pn532_packetbuffer[2] << 8 | pn532_packetbuffer[3];      
   //          DMSG("ATQA: 0x");  DMSG_HEX(sens_res);
   //          DMSG("SAK: 0x");  DMSG_HEX(pn532_packetbuffer[4]);
   //          DMSG("\n");
@@ -492,8 +492,6 @@ void readNFC()
                 tmp_tag[i] = pn532_packetbuffer[6 + i];
             }
 
-            if (ret>=0)
-            {
              if (!memcmp(last_tag,tmp_tag,sizeof(tag_t)) && (millis()-tag_time<5000)) {
               return;
              }
@@ -502,65 +500,67 @@ void readNFC()
           //   Serial.println("OTHER");
              memcpy(last_tag,tmp_tag,sizeof(tag_t));   
              
-          //   tag.print();
-             print_tag(tmp_tag);
+             Serial.print("Readed MAC: "); print_tag(tmp_tag);
 
-             if (nfc.tagPresent(50))
-             {
-               Serial.println("NFC Read");
-               NfcTag tag = nfc.read();       
+             switch (userMode) {
+              case USER_MODE_NORMAL:
+                Serial.print(F("Re-Read CARD..."));
+                if (nfc.tagPresent()) {
+                  granted = false;
+
+                  Serial.print(F("Found..."));
+                  tag = nfc.read();
+                  Serial.println(F("Readed"));
+
+              //  Serial.print("Tag Type: ");Serial.println(tag.getTagType());
+              //  Serial.print("UID: ");Serial.println(tag.getUidString());
           
                if (tag.hasNdefMessage()) {
-                 Serial.println("Reading NDEFs...");
-                 NdefMessage ndef = tag.getNdefMessage();
-                 unsigned int cnt = ndef.getRecordCount();
-                 Serial.print("NDEFs count:");
-                 Serial.println(cnt);
-                 if (cnt>0) {
+                 NdefMessage ndef(tag.getNdefMessage());
+                 unsigned int cnt(ndef.getRecordCount());
+                 Serial.print("NDEFs count: ");Serial.println(cnt);
                    for (unsigned int i = 0; i < cnt; ++i) {
-                     NdefRecord rec = ndef.getRecord(i);
-                     auto Tnf = rec.getTnf();
+                     NdefRecord rec(ndef.getRecord(i));
+                     byte Tnf(rec.getTnf());
                      Serial.print(i);
-                     Serial.print(" TNF:");
-                     Serial.print(Tnf);                     
+                     Serial.print(" TNF: ");
+                     Serial.print(Tnf);
                      if (Tnf == TNF_WELL_KNOWN) {
-                       auto len = rec.getTypeLength();
-                       Serial.print(" Len:");
+                       unsigned int len(rec.getTypeLength());
+                       Serial.print(" Len: ");
                        Serial.print(len);
                        if (len==1) {
-                        uint8_t RTD_TYPE[1] = { 0x00 };                       
-                        rec.getType(RTD_TYPE);
-                        Serial.print(" Type:");
-                        Serial.print(RTD_TYPE[0]);
-                        if (RTD_TYPE[0] == 'B') {
-                          unsigned int len = rec.getPayloadLength();
+                        uint8_t RTD_TYPE = 0x00;
+                        rec.getType(&RTD_TYPE);
+                        Serial.print(" Type: ");
+                        Serial.print(RTD_TYPE);
+                        if (RTD_TYPE == 'B') {
+                          unsigned int len(rec.getPayloadLength());
+                          Serial.print(" PLLen: ");
+                          Serial.print(len);
                           if (len<=sizeof(tag_t)) {
                             rec.getPayload(tmp_tag);
+                            Serial.print("NDEF Tag: ");print_tag(tmp_tag);
                           }
+                          Serial.println();
                           break;
                         }
                        }
                      }
                      Serial.println();
                    }
-                 }
                } else 
                   Serial.println("No NDEF Records");
              }
 
-             print_tag(tmp_tag);
-            
-             //tagId = tag.getUidString();
-             switch (userMode) {
-              case USER_MODE_NORMAL:
-                Serial.println("BEEP");
+                // Serial.println("BEEP");
                 digitalWrite(BEEP_PIN, HIGH);
                 delay(200);
                 digitalWrite(BEEP_PIN, LOW);
                 if (find_tag(tmp_tag)) {
                   granted = true;
                 } else {
-                  Serial.println("BEEP2");
+                  // Serial.println("BEEP2");
                   delay(200);
                   digitalWrite(BEEP_PIN, HIGH);
                   delay(200);
@@ -570,67 +570,93 @@ void readNFC()
               case USER_MODE_CARD_ADD:
                 userMode = USER_MODE_NORMAL;
                 digitalWrite(BEEP_PIN, HIGH);
-                delay(1000);
+                delay(200);
                 digitalWrite(BEEP_PIN, LOW);
+                delay(200);
+                digitalWrite(BEEP_PIN, HIGH);
 
-                Serial.println("Try to Write NDEF...");
-                if (nfc.tagPresent(50))
-                {
-                   Serial.println("NFC Read");
-                   NfcTag tag = nfc.read();
+                // Serial.println("Try to Write NDEF...");
+                Serial.print(F("Re-Read CARD..."));
+                if (nfc.tagPresent()) {
+                  Serial.print(F("Found..."));
+                  tag = nfc.read();
+                  Serial.println(F("Readed"));
+                  //  Serial.println("NFC Read");
 
-                   Serial.print(F("TAG Type:"));
-                   Serial.println(tag.getTagType());
-               
-                   switch (tag.getUidLength()) {
-                    case 4:
-                        Serial.println(F("Reading Mifare Classic"));
-                        break;
-                    default:
-                        Serial.println(F("Can not determine tag type"));
-                        break;
-                   }
+                  //  Serial.print("Tag Type: ");Serial.println(tag.getTagType());
+                  //  Serial.print("UID: ");Serial.println(tag.getUidString());
 
                    uint8_t len = min(sizeof(tag_t),tag.getUidLength());
                    memset(tmp_tag, 0xFF, sizeof(tag_t));
                    tag.getUid((byte *)tmp_tag, len);
+
+                   Serial.print("Readed MAC: ");print_tag(tmp_tag);
+
                    for (unsigned int i=0; i<len; ++i) {
                       tmp_tag[i] = ~tmp_tag[i];
                    }
 
-                   if (!tag.hasNdefMessage()) {
-                      Serial.println(F("Trying to format..."));
-                      if (!nfc.format()) {
-                        Serial.println(F("ERR Unable to format!"));
-                        break;
-                      }
-                      Serial.println(F("TAG Formated!"));
-                      uint8_t cnt = 10;
-                      while(cnt-->0 && !nfc.tagPresent(100));
+                    Serial.print("Invert MAC: ");print_tag(tmp_tag);                    
+                    Serial.print(F("Re-Read CARD..."));
+                    if (nfc.tagPresent()) {
+                      Serial.print(F("Found..."));
                       tag = nfc.read();
-                   } else 
-                      nfc.clean();
+                      Serial.println(F("Readed"));
 
-                   NdefRecord* r = new NdefRecord();
-                   r->setTnf(TNF_WELL_KNOWN);
-                   uint8_t RTD_BIN[1] = { 'B' }; // TODO this should be a constant or preprocessor
-                   r->setType(RTD_BIN, sizeof(RTD_BIN));
-                   r->setPayload(tmp_tag, sizeof(tag_t));
-    
-                   NdefMessage ndef = NdefMessage();                                      
-                   ndef.addRecord(*r);
-                   delete(r);
+                      NdefMessage ndef((!tag.hasNdefMessage())?NdefMessage():tag.getNdefMessage());
+                      if (!tag.hasNdefMessage() || (ndef.getRecordCount()>=MAX_NDEF_RECORDS)) {
+                          Serial.println(F("Trying to clean..."));
+                          nfc.clean();
+                          Serial.print(F("Re-Read CARD..."));
+                          if (nfc.tagPresent()) {
+                            Serial.print(F("Found..."));
+                            tag = nfc.read();
+                            Serial.println(F("Readed"));
 
-                   Serial.println("NFC Write");
-                   nfc.write(ndef);
+                            Serial.println(F("Trying to format..."));
+                            if (!nfc.format()) {
+                              Serial.println(F("ERR Unable to format!"));
+                              break;
+                           }                            
+                            // Serial.println(F("TAG Formated!"));
+                          // uint8_t cnt = 10;
+                          // while(cnt-->0 && !nfc.tagPresent(100));
+                          }
+                      } else {
+                        Serial.println(F("Good NDEF"));
+                      }
+
+                      // NdefRecord *r(new NdefRecord());
+                      // r->setTnf(TNF_WELL_KNOWN);
+                      // r->setType((const byte *)"B", 1);
+                      // r->setPayload(tmp_tag, sizeof(tag_t));
+                      ndef.addRecord(NdefRecord((byte)TNF_WELL_KNOWN, (const byte *)"B", (size_t)1, (const byte *)tmp_tag, sizeof(tag_t)));
+                      // delete r;
+                        
+                      Serial.print("NFC Write ");
+                      boolean writed(nfc.write(ndef));
+                      if (writed) {
+                        Serial.println("DONE!");
+                        goto done;
+                      } else {
+                        Serial.println("FAIL!");
+                      }
+                    }
+                    for (uint8_t i=0; i<2; ++i) {
+                      digitalWrite(BEEP_PIN, LOW);
+                      delay(500);
+                      digitalWrite(BEEP_PIN, HIGH);
+                      delay(500);
+                    }
                 }
-             
+done:
+                digitalWrite(BEEP_PIN, LOW);
                 add_tag(tmp_tag);
-              break;
+
+                delay(2000);
+                break;
              }
-           }
-          } else
-            ret = -1;
+          }
         }
       }      
       break;
@@ -727,8 +753,8 @@ void refreshUserMode() {
       } 
 
       if (pressCnt && (millis() - pressTime>=1000)) {       
-        Serial.print("CNT ");
-        Serial.println(pressCnt);
+        // Serial.print("CNT ");
+        // Serial.println(pressCnt);
         if (pressCnt==5) {
           userMode = USER_MODE_CARD_CLEAR;
           Serial.println("CLEAR");
