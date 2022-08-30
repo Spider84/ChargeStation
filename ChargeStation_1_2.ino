@@ -626,20 +626,34 @@ void readNFC()
                             NdefMessage ndef((!tag.hasNdefMessage()) ? NdefMessage() : tag.getNdefMessage());
                             if (!tag.hasNdefMessage() || (ndef.getRecordCount() >= MAX_NDEF_RECORDS)) {
                                 Serial.println(F("Trying to clean..."));
-                                if (!nfc.clean()) {
+                                
+                                Serial.print(F("Re-Read CARD..."));
+                                if (nfc.tagPresent()) {
+                                  Serial.print(F("Found..."));
+                                  bool cleared = false;
+                                  uint8_t try_num = 0;
+                                  while (!(cleared = nfc.clean())) {
                                       Serial.println(F("ERR Unable to clean!"));
+                                      if (++try_num>5)
                                         break;
+                                  }
+                                  if (cleared) {
+                                    Serial.println(F("Cleared!"));
+                                  }
                                 }
                                 Serial.print(F("Re-Read CARD..."));
                                 if (nfc.tagPresent()) {
                                     Serial.print(F("Found..."));
-                                    tag = nfc.read();
-                                    Serial.println(F("Readed"));
-
                                     Serial.println(F("Trying to format..."));
-                                    if (!nfc.format()) {
+                                    bool cleared = false;
+                                    uint8_t try_num = 0;
+                                    while (!(cleared = nfc.format())) {
                                         Serial.println(F("ERR Unable to format!"));
+                                        if (++try_num>5)
                                           break;
+                                    }
+                                    if (cleared) {
+                                       Serial.println(F("Formated!"));
                                     }
                                 }
                                 // Serial.println(F("TAG Formated!"));
