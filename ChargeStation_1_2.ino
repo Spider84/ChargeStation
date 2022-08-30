@@ -734,7 +734,7 @@ void refreshUserMode()
 
     switch (userMode) {
     case USER_MODE_CARD_CLEAR:
-        putLight(255, 0, 0, ledLight);
+        putLight(255, 0, 0, LED_LIGHT_MAX);
         break;
     case USER_MODE_CARD_ADD:
         if (event == KEYB_EVENT_PRESS_BTN_2) {
@@ -748,7 +748,7 @@ void refreshUserMode()
                 pressTime = 0;
             }
         }
-        putLight(0, 255, 255, ledLight);
+        putLight(255, 0, 255, LED_LIGHT_MAX);
         break;
     case USER_MODE_NORMAL:
         // Норма.
@@ -794,6 +794,7 @@ void refreshUserMode()
             // Serial.print("CNT ");
             // Serial.println(pressCnt);
             if (pressCnt == 5) {
+                putLight(255, 0, 0, LED_LIGHT_MAX);                
                 userMode = USER_MODE_CARD_CLEAR;
                 Serial.println(F("CLEAR"));
                 for (uint8_t i = 0; i < 6; ++i) {
