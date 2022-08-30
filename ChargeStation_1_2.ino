@@ -516,6 +516,11 @@ void readNFC()
 
                     switch (userMode) {
                     case USER_MODE_NORMAL:
+                        // Serial.println("BEEP");
+                        digitalWrite(BEEP_PIN, HIGH);
+                        delay(200);
+                        digitalWrite(BEEP_PIN, LOW);
+
                         Serial.print(F("Re-Read CARD..."));
                         if (nfc.tagPresent()) {
                             granted = false;
@@ -561,9 +566,13 @@ void readNFC()
                                                 if (len <= sizeof(tag_t)) {
                                                     rec.getPayload(tmp_tag);
                                                     Serial.print(F(" NDEF Tag: "));print_tag(tmp_tag);
+
+                                                    if (find_tag(tmp_tag)) {
+                                                       granted = true;
+                                                       break;
+                                                    }
                                                 } else
                                                     Serial.println();
-                                                break;
                                             }
                                         }
                                     }
@@ -572,14 +581,7 @@ void readNFC()
                             } else
                                 Serial.println(F("No NDEF Records"));
                         }
-
-                        // Serial.println("BEEP");
-                        digitalWrite(BEEP_PIN, HIGH);
-                        delay(200);
-                        digitalWrite(BEEP_PIN, LOW);
-                        if (find_tag(tmp_tag)) {
-                            granted = true;
-                        } else {
+                        if (granted) {
                             // Serial.println("BEEP2");
                             delay(200);
                             digitalWrite(BEEP_PIN, HIGH);
