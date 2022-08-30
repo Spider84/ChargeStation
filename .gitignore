@@ -1,3 +1,4 @@
 .vscode/ArduinoOutput
 .vscode/c_cpp_properties.json
 *.hex
+libraries/
