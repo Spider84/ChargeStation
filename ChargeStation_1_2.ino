@@ -516,6 +516,8 @@ void readNFC()
 
                     switch (userMode) {
                     case USER_MODE_NORMAL:
+                        granted = false;
+
                         // Serial.println("BEEP");
                         digitalWrite(BEEP_PIN, HIGH);
                         delay(200);
@@ -523,8 +525,6 @@ void readNFC()
 
                         Serial.print(F("Re-Read CARD..."));
                         if (nfc.tagPresent()) {
-                            granted = false;
-
                             Serial.print(F("Found..."));
                             tag = nfc.read();
                             Serial.println(F("Readed"));
@@ -581,7 +581,7 @@ void readNFC()
                             } else
                                 Serial.println(F("No NDEF Records"));
                         }
-                        if (granted) {
+                        if (!granted) {
                             // Serial.println("BEEP2");
                             delay(200);
                             digitalWrite(BEEP_PIN, HIGH);
