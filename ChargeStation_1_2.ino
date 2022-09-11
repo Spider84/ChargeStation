@@ -45,6 +45,7 @@
 #include <EEPROM.h>
 #include <Watchdog.h>
 #include "keyb.h"
+#include "MemoryFree.h"
 /*
 *********************************************************************************************************
 *                                              CONSTANTS
@@ -262,6 +263,13 @@ void setup()
 
     digitalWrite(BEEP_PIN, LOW);
 
+    if(MCUSR & (1<<PORF )) Serial.println(F("Power-on reset."));
+    if(MCUSR & (1<<EXTRF)) Serial.println(F("External reset!"));
+    if(MCUSR & (1<<BORF )) Serial.println(F("Brownout reset!"));
+    if(MCUSR & (1<<WDRF )) Serial.println(F("Watchdog reset!"));
+    if(MCUSR & (1<<JTRF )) Serial.println(F("JTAG reset!"));
+    MCUSR = 0;
+
     // Setup watchdog
     watchdog.enable(Watchdog::TIMEOUT_8S);
     watchdog.reset();
@@ -316,26 +324,32 @@ void loop()
       last_show = now;
       switch (userMode) {
       case USER_MODE_NORMAL:
-          Serial.println(F("USER_MODE_NORMAL"));
+          Serial.print(F("USER_MODE_NORMAL"));
           break;
       case USER_MODE_PRE_CHARGE:
-          Serial.println(F("USER_MODE_PRE_CHARGE"));
+          Serial.print(F("USER_MODE_PRE_CHARGE"));
           break;
       case USER_MODE_CHARGE:
-          Serial.println(F("USER_MODE_CHARGE"));
+          Serial.print(F("USER_MODE_CHARGE"));
           break;
       case USER_MODE_ALARM:
-          Serial.println(F("USER_MODE_ALARM"));
+          Serial.print(F("USER_MODE_ALARM"));
           break;
       case USER_MODE_CARD_ADD:
-          Serial.println(F("USER_MODE_CARD_ADD"));
+          Serial.print(F("USER_MODE_CARD_ADD"));
           break;
       case USER_MODE_CARD_CLEAR:
-          Serial.println(F("USER_MODE_CARD_CLEAR"));
+          Serial.print(F("USER_MODE_CARD_CLEAR"));
           clear_tags();
           userMode = USER_MODE_NORMAL;
           break;
       }
+#if 0
+      Serial.print(F(" F:"));
+      Serial.println(freeMemory());
+#else
+      Serial.println();
+#endif
     }
 
     switch (stateHold) {
@@ -460,10 +474,9 @@ bool add_tag(tag_t tag)
 //Весь ужас далее - попытка придать стандартному PN532 коду большей асинхронности
 //Из коробки он блокируемый, что приводит к тормозам кода и реакциям на кнопку.
 
-uint8_t pn532_packetbuffer[64];
-
-void readNFC()
+static inline void readNFC(void )
 {
+    static uint8_t pn532_packetbuffer[32];
     static tag_t last_tag;
     static uint32_t tag_time = 0;
     static uint8_t s_state = 0;
@@ -484,8 +497,8 @@ void readNFC()
         break;
     case 1:
         ret = pn532_i2c.readResponse(pn532_packetbuffer, sizeof(pn532_packetbuffer), 1);
-        // Serial.print("RESP: ");Serial.println(ret);
         if (ret != -1) {
+//            Serial.print("RESP: ");Serial.println(ret);
             ++s_state;
             if (ret >= 0) {
                 ret = -1;
@@ -498,16 +511,17 @@ void readNFC()
                     /* Card appears to be Mifare Classic */
                     //          *uidLength = pn532_packetbuffer[5];
 
-                    tag_t tmp_tag;
+                    static tag_t tmp_tag;
                     memset(tmp_tag, 0xFF, sizeof(tag_t));
                     for (uint8_t i = 0; i < pn532_packetbuffer[5]; i++) {
                         tmp_tag[i] = pn532_packetbuffer[6 + i];
                     }
 
-                    if (!memcmp(last_tag, tmp_tag, sizeof(tag_t)) && (millis() - tag_time < 5000)) {
+                    unsigned long now = millis();
+                    if (!memcmp(last_tag, tmp_tag, sizeof(tag_t)) && (now - tag_time < 5000)) {
                         return;
                     }
-                    tag_time = millis();
+                    tag_time = now;
 
                     //   Serial.println("OTHER");
                     memcpy(last_tag, tmp_tag, sizeof(tag_t));
@@ -692,6 +706,7 @@ void readNFC()
                         digitalWrite(BEEP_PIN, LOW);
                         add_tag(tmp_tag);
 
+                        watchdog.reset();
                         delay(2000);
                         break;
                     }
